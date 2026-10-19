@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# leaf.py — version INFEST (darcyabjones) avec détection du plug d'inoculation.
+# Patch : LeafStats.plug_area, LeafStats.from_images(plug=...), Leaf.plug().
+# Basé sur src/INFEST/leaf.py @ master (fb17ac6) de darcyabjones/INFEST.
 
 import numpy as np
 from typing import NamedTuple, Literal, Any
@@ -18,6 +21,7 @@ class LeafStats(NamedTuple):
     mask_area: int
     time: int | None
     position: tuple[float, float] | None = None
+    plug_area: int = 0
 
 
     @classmethod
@@ -28,11 +32,13 @@ class LeafStats(NamedTuple):
         leaf: np.ndarray,
         ichloro: np.ndarray,
         mask: np.ndarray,
+        plug: np.ndarray | None = None,
         time: int | None = None,
         position: tuple[float, float] | None = None
     ) -> "LeafStats":
         lesion_area = np.sum(lesion)
-        leaf_area = np.sum(leaf) + np.sum(lesion)
+        plug_area = int(np.sum(plug)) if plug is not None else 0
+        leaf_area = np.sum(leaf) + np.sum(lesion) + plug_area
         ichloro_area = np.sum(ichloro)
         mask_area = np.sum(mask)
         return cls(
@@ -42,7 +48,8 @@ class LeafStats(NamedTuple):
             ichloro_area,
             mask_area,
             time,
-            position
+            position,
+            plug_area
         )
 
     @classmethod
@@ -54,6 +61,7 @@ class LeafStats(NamedTuple):
             "leaf_area",
             "ichloro_sum",
             "mask_area",
+            "plug_area",
             "x",
             "y"
         ])
@@ -71,6 +79,7 @@ class LeafStats(NamedTuple):
             str(self.leaf_area),
             str(round(self.ichloro_sum, 2)),
             str(self.mask_area),
+            str(self.plug_area),
         ]
 
         if self.position is None:
@@ -97,6 +106,7 @@ class LeafStats(NamedTuple):
             "leaf_area": self.leaf_area,
             "ichloro_sum": self.ichloro_sum,
             "mask_area": self.mask_area,
+            "plug_area": self.plug_area,
             "x": x,
             "y": y
         }
@@ -292,6 +302,21 @@ class Leaf:
 
         return leaf.astype(int)
 
+    def plug(self, params=None):
+        """Masque du plug d'inoculation (blanc), sinon confondu avec le fond.
+
+        Le plug est une tache quasi-blanche, circulaire, entourée de tissu
+        foliaire. Pendant la phase où la lésion est masquée par le plug,
+        `plug_area` permet de reconstituer la surface réelle de lésion en
+        aval : lesion_total = lesion_area + plug_area (avec vigilance sur
+        la transition, cf. docstring de INFEST.plug).
+        """
+        from INFEST.plug import plug_mask
+        m = plug_mask(self.img_original, params)
+        if self.exclude_mask is not None:
+            m[self.exclude_mask] = False
+        return m.astype(int)
+
     def stats(
         self,
         lesion: np.ndarray | None = None,
@@ -318,12 +343,15 @@ class Leaf:
         else:
             mask = np.asarray(self.mask)
 
+        plug_ = self.plug()
+
         return LeafStats.from_images(
             id=self.id,
             lesion=lesion_,
             leaf=leaf_,
             ichloro=ichloro_,
             mask=mask,
+            plug=plug_,
             time=self.time,
             position=self.position
         )
